@@ -1,0 +1,44 @@
+{
+  "name": "upplus",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@tiptap/extension-document": "^2.10.4",
+    "@tiptap/extension-heading": "^2.10.4",
+    "@tiptap/extension-paragraph": "^2.10.4",
+    "@tiptap/extension-text": "^2.10.4",
+    "@tiptap/extension-bold": "^2.10.4",
+    "@tiptap/extension-italic": "^2.10.4",
+    "@tiptap/extension-strike": "^2.10.4",
+    "@tiptap/extension-code": "^2.10.4",
+    "@tiptap/extension-code-block": "^2.10.4",
+    "@tiptap/extension-bullet-list": "^2.10.4",
+    "@tiptap/extension-ordered-list": "^2.10.4",
+    "@tiptap/extension-list-item": "^2.10.4",
+    "@tiptap/extension-blockquote": "^2.10.4",
+    "@tiptap/extension-horizontal-rule": "^2.10.4",
+    "@tiptap/extension-hard-break": "^2.10.4",
+    "@tiptap/extension-history": "^2.10.4",
+    "@tiptap/extension-placeholder": "^2.10.4",
+    "@tiptap/react": "^2.10.4",
+    "@tiptap/starter-kit": "^2.10.4",
+    "next": "15.3.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.0.1",
+    "postcss": "^8",
+    "tailwindcss": "^3.3.0",
+    "typescript": "^5"
+  }
+}
