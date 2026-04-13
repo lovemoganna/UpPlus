@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -14,17 +14,19 @@ interface EditorProps {
   disabled?: boolean;
 }
 
+const STORAGE_KEY_CONTENT = (roomId: string) => `upplus_${roomId}_content`;
+const STORAGE_KEY_USERS = (roomId: string) => `upplus_${roomId}_users`;
+
 export default function Editor({
   roomId,
   initialContent,
-  passwordHash,
   userId,
   onParticipantsChange,
   disabled = false,
 }: EditorProps) {
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isReceivingUpdate = useRef(false);
+  const channelRef = useRef<BroadcastChannel | null>(null);
   const [connected, setConnected] = useState(false);
 
   const editor = useEditor({
@@ -34,98 +36,71 @@ export default function Editor({
         placeholder: "在此输入内容... 多人可以实时协作编辑",
       }),
     ],
-    content: initialContent ? JSON.parse(initialContent) : "",
+    content: initialContent || "",
     editable: !disabled,
     onUpdate: ({ editor }) => {
-      // 内容变化时，延迟保存
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
 
-      saveTimeoutRef.current = setTimeout(async () => {
+      saveTimeoutRef.current = setTimeout(() => {
         const content = JSON.stringify(editor.getJSON());
+        localStorage.setItem(STORAGE_KEY_CONTENT(roomId), content);
 
-        try {
-          await fetch(`/api/room/${roomId}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              content,
-              editorId: userId,
-            }),
-          });
-        } catch (error) {
-          console.error("保存内容失败:", error);
-        }
-      }, 500); // 500ms 防抖
+        channelRef.current?.postMessage(
+          JSON.stringify({ type: "update", content, editor: userId })
+        );
+      }, 300);
     },
   });
 
-  // 建立 SSE 连接
+  // Setup BroadcastChannel for cross-tab sync
   useEffect(() => {
     if (!roomId || !userId) return;
 
-    const eventSource = new EventSource(
-      `/api/events/${roomId}?userId=${encodeURIComponent(userId)}`
-    );
-    eventSourceRef.current = eventSource;
+    const channel = new BroadcastChannel(`upplus_${roomId}`);
+    channelRef.current = channel;
+    setConnected(true);
 
-    eventSource.onopen = () => {
-      setConnected(true);
-    };
-
-    eventSource.onmessage = (event) => {
+    channel.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
 
-        switch (data.type) {
-          case "connected":
-            break;
+        if (data.type === "update") {
+          if (data.editor === userId) return;
 
-          case "update":
-            // 忽略自己发送的更新
-            if (data.editor === userId) return;
-
-            isReceivingUpdate.current = true;
-            if (editor && data.content) {
-              const parsed = JSON.parse(data.content);
-              editor.commands.setContent(parsed, false);
-            }
-            setTimeout(() => {
-              isReceivingUpdate.current = false;
-            }, 100);
-            break;
-
-          case "participants":
-            onParticipantsChange?.(data.count);
-            break;
-
-          case "ping":
-            // 心跳，无需处理
-            break;
+          isReceivingUpdate.current = true;
+          if (editor && data.content) {
+            const parsed = JSON.parse(data.content);
+            editor.commands.setContent(parsed, false);
+          }
+          setTimeout(() => {
+            isReceivingUpdate.current = false;
+          }, 100);
         }
-      } catch (error) {
-        // 非 JSON 数据（如注释行或 keepalive）
+
+        if (data.type === "presence") {
+          onParticipantsChange?.(data.count);
+        }
+      } catch {
+        // ignore
       }
     };
 
-    eventSource.onerror = () => {
-      setConnected(false);
-      // 5秒后重连
-      setTimeout(() => {
-        if (eventSourceRef.current === eventSource) {
-          eventSource.close();
-        }
-      }, 5000);
+    // Register presence
+    const registerPresence = () => {
+      channel.postMessage(JSON.stringify({ type: "presence_join", userId }));
     };
+    registerPresence();
 
     return () => {
-      eventSource.close();
-      eventSourceRef.current = null;
+      channel.postMessage(JSON.stringify({ type: "presence_leave", userId }));
+      channel.close();
+      channelRef.current = null;
+      setConnected(false);
     };
   }, [roomId, userId, onParticipantsChange, editor]);
 
-  // 组件卸载时清理
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {

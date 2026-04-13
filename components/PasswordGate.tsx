@@ -10,6 +10,9 @@ interface PasswordGateProps {
   mode: "create" | "join";
 }
 
+const STORAGE_KEY_PWD = (roomId: string) => `upplus_${roomId}_pwd`;
+const STORAGE_KEY_PWD_HASH = (roomId: string) => `upplus_${roomId}_pwd_hash`;
+
 export default function PasswordGate({
   roomId,
   onVerified,
@@ -19,79 +22,43 @@ export default function PasswordGate({
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const savePassword = (pwd: string) => {
-    localStorage.setItem(`room_${roomId}_pwd`, pwd);
-  };
-
-  const verifyRoom = async () => {
-    if (!password) {
-      setError("请输入密码");
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const passwordHash = await hashPassword(password);
-
-      if (mode === "join") {
-        const res = await fetch(
-          `/api/room/${roomId}/verify?passwordHash=${encodeURIComponent(passwordHash)}`
-        );
-        const data = await res.json();
-
-        if (!data.exists) {
-          setError("房间不存在");
-          onError("房间不存在");
-          return;
-        }
-
-        if (!data.success) {
-          setError("密码错误");
-          onError("密码错误");
-          return;
-        }
-      }
-
-      savePassword(password);
-      onVerified(password);
-    } catch {
-      setError("网络错误，请重试");
-      onError("网络错误");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!password || password.length < 4) {
+      setError("密码长度至少4位");
+      return;
+    }
+
     if (mode === "create") {
-      if (!password || password.length < 4) {
-        setError("密码长度至少4位");
-        return;
-      }
       if (password !== confirmPassword) {
         setError("两次密码不一致");
         return;
       }
 
-      setLoading(true);
-      setError("");
-
-      try {
-        savePassword(password);
-        onVerified(password);
-      } catch {
-        setError("网络错误，请重试");
-      } finally {
-        setLoading(false);
-      }
+      const hash = await hashPassword(password);
+      localStorage.setItem(STORAGE_KEY_PWD(roomId), password);
+      localStorage.setItem(STORAGE_KEY_PWD_HASH(roomId), hash);
+      onVerified(password);
     } else {
-      verifyRoom();
+      const savedHash = localStorage.getItem(STORAGE_KEY_PWD_HASH(roomId));
+      const inputHash = await hashPassword(password);
+
+      if (!savedHash) {
+        setError("房间不存在");
+        onError("房间不存在");
+        return;
+      }
+
+      if (savedHash !== inputHash) {
+        setError("密码错误");
+        onError("密码错误");
+        return;
+      }
+
+      localStorage.setItem(STORAGE_KEY_PWD(roomId), password);
+      onVerified(password);
     }
   };
 
@@ -153,25 +120,12 @@ export default function PasswordGate({
 
             <button
               type="submit"
-              disabled={loading}
-              className="w-full py-3.5 bg-indigo-500 hover:bg-indigo-600 text-white font-medium rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full py-3.5 bg-indigo-500 hover:bg-indigo-600 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
             >
-              {loading ? (
-                <>
-                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  验证中...
-                </>
-              ) : (
-                <>
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  {mode === "create" ? "创建房间" : "进入房间"}
-                </>
-              )}
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              {mode === "create" ? "创建房间" : "进入房间"}
             </button>
           </form>
         </div>

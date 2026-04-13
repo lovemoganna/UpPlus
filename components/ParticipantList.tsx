@@ -30,7 +30,7 @@ export default function ParticipantList({ roomId, initialCount = 0 }: Participan
         ))}
       </div>
       <span className="text-sm text-slate-500">
-        {count === 0 ? "无参与者" : `${count} 人在线`}
+        {count === 0 ? "仅本地" : `${count} 人在线`}
       </span>
     </div>
   );
