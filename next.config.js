@@ -1,13 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: "export",
-  images: {
-    unoptimized: true,
-  },
-  basePath: "/UpPlus",
-  assetPrefix: "/UpPlus/",
-  trailingSlash: true,
 };
+
+if (process.env.NEXT_BUILD_PHASE === "phase-export") {
+  nextConfig.basePath = "/UpPlus";
+  nextConfig.assetPrefix = "/UpPlus/";
+  nextConfig.output = "export";
+  nextConfig.images = { unoptimized: true };
+}
 
 module.exports = nextConfig;

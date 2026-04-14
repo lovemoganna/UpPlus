@@ -38,6 +38,33 @@ export function generateRoomId(): string {
 }
 
 /**
+ * 生成样本房间 ID（用于静态导出预生成）。
+ * 36^8 ≈ 2.8 万亿种组合，预生成 5000 个使碰撞概率 < 0.001%。
+ */
+export const SAMPLE_ROOM_IDS: string[] = (() => {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const ids = new Set<string>();
+  // 用确定性种子确保每次构建生成相同的 ID 集合
+  let seed = 1234567;
+  while (ids.size < 5000) {
+    seed = (seed * 1664525 + 1013904223) & 0x7fffffff;
+    if (!ids.has(chars[seed % 36] + chars[(seed >> 5) % 36] + chars[(seed >> 10) % 36] + chars[(seed >> 15) % 36] + chars[(seed >> 20) % 36] + chars[(seed >> 25) % 36] + chars[(seed >> 30) % 36] + chars[(seed >> 35) % 36])) {
+      ids.add(
+        chars[seed % 36] +
+        chars[(seed >> 5) % 36] +
+        chars[(seed >> 10) % 36] +
+        chars[(seed >> 15) % 36] +
+        chars[(seed >> 20) % 36] +
+        chars[(seed >> 25) % 36] +
+        chars[(seed >> 30) % 36] +
+        chars[(seed >> 35) % 36]
+      );
+    }
+  }
+  return [...ids];
+})();
+
+/**
  * 生成用户唯一标识（用于在线感知）
  */
 export function generateUserId(): string {

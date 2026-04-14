@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import { generateUserId, hashPassword } from "@/lib/crypto";
@@ -15,6 +16,7 @@ const STORAGE_KEY_PWD_HASH = (roomId: string) => `upplus_${roomId}_pwd_hash`;
 const STORAGE_KEY_USERS = (roomId: string) => `upplus_${roomId}_users`;
 
 export default function RoomClient() {
+  const router = useRouter();
   const params = useParams();
   const roomId = params?.roomId as string;
 
@@ -122,7 +124,7 @@ export default function RoomClient() {
 
   const handleLeaveRoom = () => {
     localStorage.removeItem(STORAGE_KEY_PWD(roomId));
-    window.location.href = "/";
+    router.push("/");
   };
 
   if (state === "loading") {
