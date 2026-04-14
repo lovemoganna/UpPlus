@@ -133,7 +133,7 @@ export default function HomePage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="至少4位字符"
                   className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all text-slate-900 placeholder-slate-400"
-                  disabled={loading}
+                  disabled={false}
                   autoComplete="new-password"
                 />
               </div>
@@ -147,7 +147,7 @@ export default function HomePage() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="再次输入密码"
                   className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all text-slate-900 placeholder-slate-400"
-                  disabled={loading}
+                  disabled={false}
                   autoComplete="new-password"
                 />
               </div>
@@ -180,7 +180,7 @@ export default function HomePage() {
                   onChange={(e) => setRoomId(e.target.value.toLowerCase())}
                   placeholder="输入房间ID"
                   className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all text-slate-900 placeholder-slate-400 font-mono tracking-wider uppercase"
-                  disabled={loading}
+                  disabled={false}
                   autoComplete="off"
                 />
               </div>
@@ -194,7 +194,7 @@ export default function HomePage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="输入房间密码"
                   className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all text-slate-900 placeholder-slate-400"
-                  disabled={loading}
+                  disabled={false}
                   autoComplete="current-password"
                 />
               </div>

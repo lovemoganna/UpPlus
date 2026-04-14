@@ -91,7 +91,6 @@ export default function PasswordGate({
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={mode === "create" ? "至少4位字符" : "输入房间密码"}
                 className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all text-slate-900"
-                disabled={loading}
                 autoFocus
               />
             </div>
@@ -107,7 +106,6 @@ export default function PasswordGate({
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="再次输入密码"
                   className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all text-slate-900"
-                  disabled={loading}
                 />
               </div>
             )}
