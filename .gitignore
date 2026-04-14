@@ -7,6 +7,9 @@ out/
 build/
 dist/
 
+# GitHub Pages SPA fallback (regenerated post-build)
+404.html
+
 # Environment variables
 .env
 .env.local
@@ -51,3 +54,4 @@ coverage/
 
 # Misc
 *.log
+.gstack/

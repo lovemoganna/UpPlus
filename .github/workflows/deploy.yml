@@ -33,6 +33,31 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Override 404.html for SPA routing
+        run: |
+          cat > out/404.html << 'HTML'
+          <!DOCTYPE html>
+          <html lang="zh-CN">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>UpPlus</title>
+            <script>
+              (function() {
+                var basePath = "/UpPlus";
+                var path = location.pathname.replace(basePath, "") || "/";
+                if (!path.endsWith("/") && !path.includes(".")) path += "/";
+                if (path !== "/" && path !== "") {
+                  sessionStorage.setItem("__spa_redirect", path);
+                }
+                location.replace(basePath + "/");
+              })();
+            </script>
+          </head>
+          <body></body>
+          </html>
+          HTML
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
