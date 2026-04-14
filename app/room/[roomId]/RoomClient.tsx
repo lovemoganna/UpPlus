@@ -14,9 +14,9 @@ const STORAGE_KEY_CONTENT = (roomId: string) => `upplus_${roomId}_content`;
 const STORAGE_KEY_PWD_HASH = (roomId: string) => `upplus_${roomId}_pwd_hash`;
 const STORAGE_KEY_USERS = (roomId: string) => `upplus_${roomId}_users`;
 
-export default function RoomClient({ params }: { params: Promise<{ roomId: string }> }) {
-  const resolvedParams = use(params);
-  const roomId = resolvedParams?.roomId as string;
+export default function RoomClient() {
+  const params = useParams();
+  const roomId = params?.roomId as string;
 
   const [state, setState] = useState<RoomState>("loading");
   const [initialContent, setInitialContent] = useState("");
