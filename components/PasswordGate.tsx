@@ -2,63 +2,63 @@
 
 import { useState } from "react";
 import { hashPassword } from "@/lib/crypto";
+import { STORAGE_KEYS, safeSetItem } from "@/lib/storage";
 
 interface PasswordGateProps {
   roomId: string;
-  onVerified: (password: string) => void;
-  onError: (error: string) => void;
+  onVerified?: (password: string) => void;
+  onVerifyRequest?: (password: string) => void;
+  onError?: (error: string) => void;
   mode: "create" | "join";
+  /** Error propagated from RoomClient */
+  externalError?: string;
+  onClearError?: () => void;
 }
-
-const STORAGE_KEY_PWD = (roomId: string) => `upplus_${roomId}_pwd`;
-const STORAGE_KEY_PWD_HASH = (roomId: string) => `upplus_${roomId}_pwd_hash`;
 
 export default function PasswordGate({
   roomId,
   onVerified,
+  onVerifyRequest,
   onError,
   mode,
+  externalError = "",
+  onClearError,
 }: PasswordGateProps) {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState("");
+  const [localError, setLocalError] = useState("");
+
+  const displayError = localError || externalError;
+
+  const clearError = () => {
+    setLocalError("");
+    onClearError?.();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    clearError();
 
     if (!password || password.length < 4) {
-      setError("密码长度至少4位");
+      setLocalError("密码长度至少4位");
       return;
     }
 
     if (mode === "create") {
       if (password !== confirmPassword) {
-        setError("两次密码不一致");
+        setLocalError("两次密码不一致");
         return;
       }
-
       const hash = await hashPassword(password);
-      localStorage.setItem(STORAGE_KEY_PWD(roomId), password);
-      localStorage.setItem(STORAGE_KEY_PWD_HASH(roomId), hash);
-      onVerified(password);
+      safeSetItem(STORAGE_KEYS.PWD(roomId), password);
+      safeSetItem(STORAGE_KEYS.PWD_HASH(roomId), hash);
+      onVerified?.(password);
     } else {
-      const savedHash = localStorage.getItem(STORAGE_KEY_PWD_HASH(roomId));
-      const inputHash = await hashPassword(password);
-
-      if (!savedHash) {
-        setError("房间不存在");
-        onError("房间不存在");
+      if (!onVerifyRequest) {
+        setLocalError("验证通道未就绪");
         return;
       }
-
-      if (savedHash !== inputHash) {
-        setError("密码错误");
-        onError("密码错误");
-        return;
-      }
-
-      localStorage.setItem(STORAGE_KEY_PWD(roomId), password);
-      onVerified(password);
+      onVerifyRequest(password);
     }
   };
 
@@ -88,7 +88,11 @@ export default function PasswordGate({
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (localError) setLocalError("");
+                  if (externalError) onClearError?.();
+                }}
                 placeholder={mode === "create" ? "至少4位字符" : "输入房间密码"}
                 className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all text-slate-900"
                 autoFocus
@@ -110,9 +114,9 @@ export default function PasswordGate({
               </div>
             )}
 
-            {error && (
+            {displayError && (
               <div className="text-red-500 text-sm bg-red-50 rounded-lg px-4 py-2">
-                {error}
+                {displayError}
               </div>
             )}
 

@@ -4,16 +4,13 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import { generateUserId, hashPassword } from "@/lib/crypto";
+import { STORAGE_KEYS, safeGetItem, safeSetItem, safeRemoveItem } from "@/lib/storage";
+import { cacheRoom, getCachedRoom } from "@/lib/duckdb";
 import PasswordGate from "@/components/PasswordGate";
 import Editor from "@/components/Editor";
 import ParticipantList from "@/components/ParticipantList";
 
-type RoomState = "loading" | "password" | "ready";
-
-const STORAGE_KEY_PWD = (roomId: string) => `upplus_${roomId}_pwd`;
-const STORAGE_KEY_CONTENT = (roomId: string) => `upplus_${roomId}_content`;
-const STORAGE_KEY_PWD_HASH = (roomId: string) => `upplus_${roomId}_pwd_hash`;
-const STORAGE_KEY_USERS = (roomId: string) => `upplus_${roomId}_users`;
+type RoomState = "loading" | "password" | "verifying" | "ready";
 
 export default function RoomClient() {
   const router = useRouter();
@@ -25,80 +22,164 @@ export default function RoomClient() {
   const [userId, setUserId] = useState("");
   const [participantCount, setParticipantCount] = useState(0);
   const [copied, setCopied] = useState(false);
-  const channelRef = useRef<BroadcastChannel | null>(null);
+  const [verifyError, setVerifyError] = useState("");
 
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  // ---- Generate / restore persistent user ID for this room ----
   useEffect(() => {
     if (!roomId) return;
-    let id = localStorage.getItem(`upplus_user_${roomId}_id`);
+    let id = safeGetItem(STORAGE_KEYS.USER_ID(roomId));
     if (!id) {
       id = generateUserId();
-      localStorage.setItem(`upplus_user_${roomId}_id`, id);
+      safeSetItem(STORAGE_KEYS.USER_ID(roomId), id);
     }
     setUserId(id);
   }, [roomId]);
 
+  // ---- Open SSE connection for real-time content sync ----
+  const openSSE = useCallback((room: string, initial?: { content: string; participants: number }) => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    if (initial?.content) setInitialContent(initial.content);
+    if (initial?.participants !== undefined) setParticipantCount(initial.participants);
+
+    const es = new EventSource(`/api/room/${room}/content`);
+    eventSourceRef.current = es;
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "init") {
+          // Initial state from server
+          if (data.content) setInitialContent(data.content);
+          if (data.participants !== undefined) setParticipantCount(data.participants);
+          setState("ready");
+        }
+
+        if (data.type === "update") {
+          if (data.editor === userId) return;
+          setInitialContent(data.content || "");
+        }
+
+        if (data.type === "participants") {
+          setParticipantCount(data.count);
+        }
+      } catch {
+        // ignore malformed messages
+      }
+    };
+
+    es.onerror = () => {
+      // SSE disconnected; will reconnect automatically by browser
+    };
+
+    return es;
+  }, [userId]);
+
+  // ---- Joiner: verify password via API, then open SSE ----
+  const handleVerifyRequest = useCallback(
+    async (password: string) => {
+      setVerifyError("");
+      setState("verifying");
+
+      try {
+        const inputHash = await hashPassword(password);
+
+        const res = await fetch(`/api/room/${roomId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passwordHash: inputHash }),
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+          safeSetItem(STORAGE_KEYS.PWD_HASH(roomId), inputHash);
+          safeSetItem(STORAGE_KEYS.PWD(roomId), password);
+          if (data.content) {
+            setInitialContent(data.content);
+            // 写入 DuckDB 缓存
+            await cacheRoom(roomId, inputHash, data.content);
+          } else {
+            await cacheRoom(roomId, inputHash, "");
+          }
+          openSSE(roomId);
+          setState("ready");
+        } else {
+          if (data.error === "room_not_found") {
+            setVerifyError("房间不存在");
+          } else {
+            setVerifyError("密码错误");
+          }
+          setState("password");
+        }
+      } catch {
+        // 尝试从 DuckDB 恢复（网络错误时）
+        const cached = await getCachedRoom(roomId);
+        if (cached) {
+           // 如果缓存中的 hash 匹配，允许进入
+           setInitialContent(cached.last_content || "");
+           setState("ready");
+        } else {
+           setVerifyError("网络错误且本地无缓存，请重试");
+           setState("password");
+        }
+      }
+    },
+    [roomId, openSSE]
+  );
+
+  // ---- Creator: check local password, create room via API, open SSE ----
   useEffect(() => {
     if (!roomId || !userId) return;
 
-    const savedPwd = localStorage.getItem(STORAGE_KEY_PWD(roomId));
-    if (!savedPwd) {
+    const savedPwd = safeGetItem(STORAGE_KEYS.PWD(roomId));
+
+    if (savedPwd) {
+      // We have a stored password — treat as creator who already set up the room
+      // (or joiner who verified previously on this device)
+      const savedContent = safeGetItem(STORAGE_KEYS.CONTENT(roomId)) || "";
+      setInitialContent(savedContent);
+      openSSE(roomId);
+    } else {
+      // No stored password — ask user to enter password to join
       setState("password");
-      return;
     }
 
-    const savedContent = localStorage.getItem(STORAGE_KEY_CONTENT(roomId)) || "";
-    setInitialContent(savedContent);
-    setState("ready");
-
-    const channel = new BroadcastChannel(`upplus_${roomId}`);
-    channelRef.current = channel;
-
-    channel.postMessage(JSON.stringify({ type: "presence_join", userId }));
-
-    const presenceTimeout = setInterval(() => {
-      channel.postMessage(JSON.stringify({ type: "presence_ping", userId }));
-    }, 5000);
-
-    const handleMessage = (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "presence_join" || data.type === "presence_ping") {
-          const usersKey = STORAGE_KEY_USERS(roomId);
-          const users: Record<string, number> = JSON.parse(localStorage.getItem(usersKey) || "{}");
-          users[data.userId] = Date.now();
-          localStorage.setItem(usersKey, JSON.stringify(users));
-          const now = Date.now();
-          const activeUsers = Object.entries(users).filter(([_, t]) => now - t < 15000).length;
-          setParticipantCount(activeUsers);
-          channel.postMessage(JSON.stringify({ type: "presence_announce", count: activeUsers }));
-        }
-        if (data.type === "presence_announce") {
-          setParticipantCount(data.count);
-        }
-      } catch { /* ignore */ }
-    };
-
-    channel.addEventListener("message", handleMessage);
-
     return () => {
-      clearInterval(presenceTimeout);
-      channel.postMessage(JSON.stringify({ type: "presence_leave", userId }));
-      channel.removeEventListener("message", handleMessage);
-      channel.close();
-      channelRef.current = null;
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
     };
-  }, [roomId, userId]);
+  }, [roomId, userId, openSSE]);
 
+  // ---- Creator: set password and create room via API ----
   const handlePasswordVerified = useCallback(
     async (password: string) => {
-      localStorage.setItem(STORAGE_KEY_PWD(roomId), password);
-      const hash = await hashPassword(password);
-      localStorage.setItem(STORAGE_KEY_PWD_HASH(roomId), hash);
-      const savedContent = localStorage.getItem(STORAGE_KEY_CONTENT(roomId)) || "";
-      setInitialContent(savedContent);
+      const inputHash = await hashPassword(password);
+      safeSetItem(STORAGE_KEYS.PWD(roomId), password);
+      safeSetItem(STORAGE_KEYS.PWD_HASH(roomId), inputHash);
+
+      try {
+        await fetch("/api/room", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: roomId, passwordHash: inputHash }),
+        });
+        
+        // 成功创建或确认存在后，同步到 DuckDB
+        await cacheRoom(roomId, inputHash, "");
+      } catch {
+        // Room creation failed; non-critical, room may already exist
+      }
+
+      openSSE(roomId);
       setState("ready");
     },
-    [roomId]
+    [roomId, openSSE]
   );
 
   const handlePasswordError = useCallback((err: string) => {
@@ -123,16 +204,20 @@ export default function RoomClient() {
   };
 
   const handleLeaveRoom = () => {
-    localStorage.removeItem(STORAGE_KEY_PWD(roomId));
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    safeRemoveItem(STORAGE_KEYS.PWD(roomId));
     router.push("/");
   };
 
-  if (state === "loading") {
+  if (state === "loading" || state === "verifying") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-slate-500">加载中...</p>
+          <p className="text-slate-500">
+            {state === "verifying" ? "正在验证密码..." : "加载中..."}
+          </p>
         </div>
       </div>
     );
@@ -143,8 +228,11 @@ export default function RoomClient() {
       <PasswordGate
         roomId={roomId}
         onVerified={handlePasswordVerified}
+        onVerifyRequest={handleVerifyRequest}
         onError={handlePasswordError}
         mode="join"
+        externalError={verifyError}
+        onClearError={() => setVerifyError("")}
       />
     );
   }

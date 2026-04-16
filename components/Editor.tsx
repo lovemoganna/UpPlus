@@ -14,9 +14,6 @@ interface EditorProps {
   disabled?: boolean;
 }
 
-const STORAGE_KEY_CONTENT = (roomId: string) => `upplus_${roomId}_content`;
-const STORAGE_KEY_USERS = (roomId: string) => `upplus_${roomId}_users`;
-
 export default function Editor({
   roomId,
   initialContent,
@@ -26,7 +23,7 @@ export default function Editor({
 }: EditorProps) {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isReceivingUpdate = useRef(false);
-  const channelRef = useRef<BroadcastChannel | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
   const [connected, setConnected] = useState(false);
 
   const editor = useEditor({
@@ -43,63 +40,91 @@ export default function Editor({
         clearTimeout(saveTimeoutRef.current);
       }
 
-      saveTimeoutRef.current = setTimeout(() => {
+      saveTimeoutRef.current = setTimeout(async () => {
         const content = JSON.stringify(editor.getJSON());
-        localStorage.setItem(STORAGE_KEY_CONTENT(roomId), content);
-
-        channelRef.current?.postMessage(
-          JSON.stringify({ type: "update", content, editor: userId })
-        );
+        // Push to server API (SSE subscribers receive the update)
+        try {
+          await fetch(`/api/room/${roomId}/content`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content, editorId: userId }),
+          });
+        } catch {
+          // Network error; will be retried on next change
+        }
       }, 300);
     },
   });
 
-  // Setup BroadcastChannel for cross-tab sync
+  // Keep editor content in sync when initialContent changes from SSE
+  useEffect(() => {
+    if (!initialContent || !editor) return;
+    if (isReceivingUpdate.current) return;
+    // Only update if content actually differs to avoid cursor jumps
+    const current = JSON.stringify(editor.getJSON());
+    if (current !== initialContent) {
+      try {
+        const parsed = JSON.parse(initialContent);
+        isReceivingUpdate.current = true;
+        editor.commands.setContent(parsed, false);
+        setTimeout(() => {
+          isReceivingUpdate.current = false;
+        }, 100);
+      } catch {
+        // ignore parse errors
+      }
+    }
+  }, [initialContent, editor]);
+
+  // Setup SSE for receiving real-time updates
   useEffect(() => {
     if (!roomId || !userId) return;
 
-    const channel = new BroadcastChannel(`upplus_${roomId}`);
-    channelRef.current = channel;
+    const es = new EventSource(`/api/room/${roomId}/content`);
+    sseRef.current = es;
     setConnected(true);
 
-    channel.onmessage = (event) => {
+    es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
 
         if (data.type === "update") {
           if (data.editor === userId) return;
-
-          isReceivingUpdate.current = true;
-          if (editor && data.content) {
+          if (!editor) return;
+          try {
             const parsed = JSON.parse(data.content);
+            isReceivingUpdate.current = true;
             editor.commands.setContent(parsed, false);
+            setTimeout(() => {
+              isReceivingUpdate.current = false;
+            }, 100);
+          } catch {
+            // ignore parse errors
           }
-          setTimeout(() => {
-            isReceivingUpdate.current = false;
-          }, 100);
         }
 
-        if (data.type === "presence") {
-          onParticipantsChange?.(data.count);
+        if (data.type === "participants" && onParticipantsChange) {
+          onParticipantsChange(data.count);
         }
       } catch {
-        // ignore
+        // ignore malformed messages
       }
     };
 
-    // Register presence
-    const registerPresence = () => {
-      channel.postMessage(JSON.stringify({ type: "presence_join", userId }));
-    };
-    registerPresence();
-
-    return () => {
-      channel.postMessage(JSON.stringify({ type: "presence_leave", userId }));
-      channel.close();
-      channelRef.current = null;
+    es.onerror = () => {
       setConnected(false);
     };
-  }, [roomId, userId, onParticipantsChange, editor]);
+
+    es.onopen = () => {
+      setConnected(true);
+    };
+
+    return () => {
+      es.close();
+      sseRef.current = null;
+      setConnected(false);
+    };
+  }, [roomId, userId, editor, onParticipantsChange]);
 
   useEffect(() => {
     return () => {
@@ -109,7 +134,6 @@ export default function Editor({
     };
   }, []);
 
-  // 工具栏按钮
   const ToolbarButton = ({
     onClick,
     active,
@@ -140,7 +164,6 @@ export default function Editor({
 
   return (
     <div className="flex flex-col h-full">
-      {/* 连接状态指示器 */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-200 bg-white">
         <div className="flex items-center gap-2">
           <div
@@ -157,7 +180,6 @@ export default function Editor({
         </div>
       </div>
 
-      {/* 格式化工具栏 */}
       <div className="flex flex-wrap items-center gap-1 px-4 py-2 border-b border-slate-200 bg-slate-50">
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
@@ -298,7 +320,6 @@ export default function Editor({
         </ToolbarButton>
       </div>
 
-      {/* 编辑器区域 */}
       <div className="flex-1 overflow-auto bg-white">
         <EditorContent editor={editor} className="min-h-full" />
       </div>

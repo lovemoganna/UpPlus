@@ -3,9 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { hashPassword, generateRoomId } from "@/lib/crypto";
-
-const STORAGE_KEY_PWD = (roomId: string) => `upplus_${roomId}_pwd`;
-const STORAGE_KEY_PWD_HASH = (roomId: string) => `upplus_${roomId}_pwd_hash`;
+import { STORAGE_KEYS, safeGetItem, safeSetItem } from "@/lib/storage";
 
 export default function HomePage() {
   const router = useRouter();
@@ -32,8 +30,22 @@ export default function HomePage() {
     const id = generateRoomId();
     const passwordHash = await hashPassword(password);
 
-    localStorage.setItem(STORAGE_KEY_PWD(id), password);
-    localStorage.setItem(STORAGE_KEY_PWD_HASH(id), passwordHash);
+    safeSetItem(STORAGE_KEYS.PWD(id), password);
+    safeSetItem(STORAGE_KEYS.PWD_HASH(id), passwordHash);
+
+    // Create room on server so joiners can verify via API
+    try {
+      const res = await fetch("/api/room", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, passwordHash }),
+      });
+      if (!res.ok) {
+        console.error("[CreateRoom] API error:", res.status, await res.text());
+      }
+    } catch (e) {
+      console.error("[CreateRoom] Network error:", e);
+    }
 
     router.push(`/room/${id}`);
   };
@@ -53,20 +65,21 @@ export default function HomePage() {
     }
 
     const inputRoomId = roomId.trim().toLowerCase();
-    const savedHash = localStorage.getItem(STORAGE_KEY_PWD_HASH(inputRoomId));
-    const inputHash = await hashPassword(password);
 
-    if (!savedHash) {
-      setError("房间不存在");
+    // Same-device: verify locally if hash is stored
+    const savedHash = safeGetItem(STORAGE_KEYS.PWD_HASH(inputRoomId));
+    if (savedHash) {
+      const inputHash = await hashPassword(password);
+      if (savedHash !== inputHash) {
+        setError("密码错误");
+        return;
+      }
+      safeSetItem(STORAGE_KEYS.PWD(inputRoomId), password);
+      router.push(`/room/${inputRoomId}`);
       return;
     }
 
-    if (savedHash !== inputHash) {
-      setError("密码错误");
-      return;
-    }
-
-    localStorage.setItem(STORAGE_KEY_PWD(inputRoomId), password);
+    // Cross-device: redirect to room page; user will re-enter password at PasswordGate
     router.push(`/room/${inputRoomId}`);
   };
 

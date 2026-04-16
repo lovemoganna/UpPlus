@@ -55,3 +55,4 @@ coverage/
 # Misc
 *.log
 .gstack/
+/data/
