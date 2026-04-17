@@ -159,6 +159,6 @@ export function removeParticipant(roomId: string, userId: string): number {
 }
 
 export function getParticipantCount(roomId: string): number {
-  const roomData = db.get("rooms").find({ id: roomId }).value();
-  return roomData?.participants?.length ?? 0;
+  const room = getRoom(roomId);
+  return room?.participants?.size ?? 0;
 }
