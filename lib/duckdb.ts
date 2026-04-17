@@ -9,7 +9,7 @@ let conn: duckdb.AsyncDuckDBConnection | null = null;
  * 初始化并获取 DuckDB 实例
  */
 export async function getDuckDB() {
-  if (db) return { db, conn };
+  if (db && conn) return { db, conn };
 
   // 选择合适的 bundle
   const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
@@ -47,8 +47,10 @@ export async function getDuckDB() {
  */
 export async function cacheRoom(roomId: string, hash: string, content: string = "") {
   try {
-    const { conn } = await getDuckDB();
-    await conn.query(`
+    const { conn: activeConn } = await getDuckDB();
+    if (!activeConn) return;
+    
+    await activeConn.query(`
       INSERT OR REPLACE INTO room_cache (id, password_hash, last_content, last_accessed)
       VALUES ('${roomId}', '${hash}', '${content.replace(/'/g, "''")}', current_timestamp)
     `);
@@ -62,11 +64,14 @@ export async function cacheRoom(roomId: string, hash: string, content: string = 
  */
 export async function getCachedRoom(roomId: string) {
   try {
-    const { conn } = await getDuckDB();
-    const result = await conn.query(`
+    const { conn: activeConn } = await getDuckDB();
+    if (!activeConn) return null;
+    
+    const result = await activeConn.query(`
       SELECT * FROM room_cache WHERE id = '${roomId}'
     `);
-    return result.toArray()[0];
+    const rows = result.toArray();
+    return rows.length > 0 ? rows[0] : null;
   } catch (e) {
     return null;
   }
