@@ -1,15 +1,16 @@
-import * as duckdb from '@duckdb/duckdb-wasm';
+import type { AsyncDuckDB, AsyncDuckDBConnection } from '@duckdb/duckdb-wasm';
 
-const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
-
-let db: duckdb.AsyncDuckDB | null = null;
-let conn: duckdb.AsyncDuckDBConnection | null = null;
+let db: AsyncDuckDB | null = null;
+let conn: AsyncDuckDBConnection | null = null;
 
 /**
  * 初始化并获取 DuckDB 实例
  */
 export async function getDuckDB() {
   if (db && conn) return { db, conn };
+
+  const duckdb = await import('@duckdb/duckdb-wasm');
+  const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
 
   // 选择合适的 bundle
   const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);

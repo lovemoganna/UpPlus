@@ -48,7 +48,7 @@ export default function RoomClient() {
     if (initial?.participants !== undefined) setParticipantCount(initial.participants);
 
     // 适配 basePath
-    const es = new EventSource(`${basePath}/api/room/${room}/content`);
+    const es = new EventSource(`${basePath}/api/room/${room}/content?userId=${userId}`);
     eventSourceRef.current = es;
 
     es.onmessage = (event) => {

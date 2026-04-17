@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { subscribeToRoom, broadcastToRoom, getRoom, updateRoomContent } from "@/lib/rooms";
+import { subscribeToRoom, broadcastToRoom, getRoom, updateRoomContent, addParticipant, removeParticipant } from "@/lib/rooms";
 import { UpdateContentResponse } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -10,11 +10,18 @@ export async function GET(
   { params }: { params: Promise<{ roomId: string }> }
 ) {
   const { roomId } = await params;
+  const { searchParams } = new URL(request.url);
+  const userId = searchParams.get("userId");
 
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     start(controller) {
+      // Add participant
+      if (userId) {
+        addParticipant(roomId, userId);
+      }
+
       // Send initial room state so joiners get current content + participant count immediately
       const room = getRoom(roomId);
       if (room) {
@@ -53,6 +60,12 @@ export async function GET(
       request.signal.addEventListener("abort", () => {
         clearInterval(heartbeat);
         unsubscribe();
+        
+        // Remove participant
+        if (userId) {
+          removeParticipant(roomId, userId);
+        }
+
         try {
           controller.close();
         } catch {
