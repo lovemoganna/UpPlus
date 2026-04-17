@@ -32,6 +32,8 @@ jobs:
 
       - name: Build
         run: npm run build:export
+        env:
+          NEXT_PUBLIC_BASE_PATH: "/UpPlus"
 
       - name: Override 404.html for SPA routing
         run: |

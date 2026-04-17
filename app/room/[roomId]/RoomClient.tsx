@@ -16,6 +16,7 @@ export default function RoomClient() {
   const router = useRouter();
   const params = useParams();
   const roomId = params?.roomId as string;
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
   const [state, setState] = useState<RoomState>("loading");
   const [initialContent, setInitialContent] = useState("");
@@ -46,7 +47,8 @@ export default function RoomClient() {
     if (initial?.content) setInitialContent(initial.content);
     if (initial?.participants !== undefined) setParticipantCount(initial.participants);
 
-    const es = new EventSource(`/api/room/${room}/content`);
+    // 适配 basePath
+    const es = new EventSource(`${basePath}/api/room/${room}/content`);
     eventSourceRef.current = es;
 
     es.onmessage = (event) => {
@@ -74,11 +76,11 @@ export default function RoomClient() {
     };
 
     es.onerror = () => {
-      // SSE disconnected; will reconnect automatically by browser
+      // 在静态环境下，SSE 可能会 404，我们直接忽略错误，让用户继续在本地编辑
     };
 
     return es;
-  }, [userId]);
+  }, [userId, basePath]);
 
   // ---- Joiner: verify password via API, then open SSE ----
   const handleVerifyRequest = useCallback(
@@ -89,11 +91,15 @@ export default function RoomClient() {
       try {
         const inputHash = await hashPassword(password);
 
-        const res = await fetch(`/api/room/${roomId}`, {
+        const res = await fetch(`${basePath}/api/room/${roomId}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ passwordHash: inputHash }),
         });
+
+        if (res.status === 404) {
+          throw new Error("api_not_available");
+        }
 
         const data = await res.json();
 
@@ -102,7 +108,6 @@ export default function RoomClient() {
           safeSetItem(STORAGE_KEYS.PWD(roomId), password);
           if (data.content) {
             setInitialContent(data.content);
-            // 写入 DuckDB 缓存
             await cacheRoom(roomId, inputHash, data.content);
           } else {
             await cacheRoom(roomId, inputHash, "");
@@ -117,20 +122,23 @@ export default function RoomClient() {
           }
           setState("password");
         }
-      } catch {
-        // 尝试从 DuckDB 恢复（网络错误时）
+      } catch (e: any) {
+        const inputHash = await hashPassword(password);
         const cached = await getCachedRoom(roomId);
-        if (cached) {
-           // 如果缓存中的 hash 匹配，允许进入
-           setInitialContent(cached.last_content || "");
-           setState("ready");
+        
+        if (cached || e.message === "api_not_available") {
+          safeSetItem(STORAGE_KEYS.PWD_HASH(roomId), inputHash);
+          safeSetItem(STORAGE_KEYS.PWD(roomId), password);
+          setInitialContent(cached?.last_content || "");
+          setState("ready");
+          // 静态环境不开启 SSE
         } else {
-           setVerifyError("网络错误且本地无缓存，请重试");
-           setState("password");
+          setVerifyError("连接失败且本地无缓存，请重试");
+          setState("password");
         }
       }
     },
-    [roomId, openSSE]
+    [roomId, openSSE, basePath]
   );
 
   // ---- Creator: check local password, create room via API, open SSE ----
@@ -140,13 +148,10 @@ export default function RoomClient() {
     const savedPwd = safeGetItem(STORAGE_KEYS.PWD(roomId));
 
     if (savedPwd) {
-      // We have a stored password — treat as creator who already set up the room
-      // (or joiner who verified previously on this device)
       const savedContent = safeGetItem(STORAGE_KEYS.CONTENT(roomId)) || "";
       setInitialContent(savedContent);
       openSSE(roomId);
     } else {
-      // No stored password — ask user to enter password to join
       setState("password");
     }
 
@@ -164,22 +169,20 @@ export default function RoomClient() {
       safeSetItem(STORAGE_KEYS.PWD_HASH(roomId), inputHash);
 
       try {
-        await fetch("/api/room", {
+        await fetch(`${basePath}/api/room`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: roomId, passwordHash: inputHash }),
         });
-        
-        // 成功创建或确认存在后，同步到 DuckDB
         await cacheRoom(roomId, inputHash, "");
       } catch {
-        // Room creation failed; non-critical, room may already exist
+        // API 失败（静态环境），继续运行
       }
 
       openSSE(roomId);
       setState("ready");
     },
-    [roomId, openSSE]
+    [roomId, openSSE, basePath]
   );
 
   const handlePasswordError = useCallback((err: string) => {
@@ -187,7 +190,6 @@ export default function RoomClient() {
   }, []);
 
   const handleCopyLink = async () => {
-    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
     const url = `${window.location.origin}${basePath}/room/${roomId}`;
     try {
       await navigator.clipboard.writeText(url);

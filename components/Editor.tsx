@@ -25,6 +25,8 @@ export default function Editor({
   const isReceivingUpdate = useRef(false);
   const sseRef = useRef<EventSource | null>(null);
   const [connected, setConnected] = useState(false);
+  
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
   const editor = useEditor({
     extensions: [
@@ -40,11 +42,21 @@ export default function Editor({
         clearTimeout(saveTimeoutRef.current);
       }
 
+import { cacheRoom } from "@/lib/duckdb";
+import { STORAGE_KEYS, safeGetItem } from "@/lib/storage";
+
+// ... 
+
       saveTimeoutRef.current = setTimeout(async () => {
         const content = JSON.stringify(editor.getJSON());
-        // Push to server API (SSE subscribers receive the update)
+        
+        // 1. 同步到本地 SQL (DuckDB) 和 LocalStorage
+        const hash = safeGetItem(STORAGE_KEYS.PWD_HASH(roomId)) || "";
+        await cacheRoom(roomId, hash, content);
+
+        // 2. 尝试同步到服务器 API (SSE subscribers receive the update)
         try {
-          await fetch(`/api/room/${roomId}/content`, {
+          await fetch(`${basePath}/api/room/${roomId}/content`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ content, editorId: userId }),
@@ -80,9 +92,8 @@ export default function Editor({
   useEffect(() => {
     if (!roomId || !userId) return;
 
-    const es = new EventSource(`/api/room/${roomId}/content`);
+    const es = new EventSource(`${basePath}/api/room/${roomId}/content`);
     sseRef.current = es;
-    setConnected(true);
 
     es.onmessage = (event) => {
       try {
@@ -124,7 +135,7 @@ export default function Editor({
       sseRef.current = null;
       setConnected(false);
     };
-  }, [roomId, userId, editor, onParticipantsChange]);
+  }, [roomId, userId, editor, onParticipantsChange, basePath]);
 
   useEffect(() => {
     return () => {
