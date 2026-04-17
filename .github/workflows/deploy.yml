@@ -31,7 +31,10 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build:export
+        run: |
+          mv app/api app/_api
+          npm run build:export
+          mv app/_api app/api
         env:
           NEXT_PUBLIC_BASE_PATH: "/UpPlus"
 
