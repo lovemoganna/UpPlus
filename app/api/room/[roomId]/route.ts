@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRoom, updateRoomContent } from "@/lib/rooms";
+import { getRoom } from "@/lib/rooms";
 import { JoinRoomResponse } from "@/lib/types";
 
 // POST /api/room/[roomId] — Join (verify password) and get room content
@@ -12,7 +12,7 @@ export async function POST(
     const body = await request.json();
     const { passwordHash } = body as { passwordHash: string };
 
-    const room = getRoom(roomId);
+    const room = await getRoom(roomId);
 
     if (!room) {
       const res: JoinRoomResponse = { success: false, error: "room_not_found" };

@@ -16,14 +16,14 @@ export async function GET(
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
-    start(controller) {
+    async start(controller) {
       // Add participant
       if (userId) {
-        addParticipant(roomId, userId);
+        await addParticipant(roomId, userId);
       }
 
       // Send initial room state so joiners get current content + participant count immediately
-      const room = getRoom(roomId);
+      const room = await getRoom(roomId);
       if (room) {
         controller.enqueue(
           encoder.encode(
@@ -57,13 +57,13 @@ export async function GET(
         }
       });
 
-      request.signal.addEventListener("abort", () => {
+      request.signal.addEventListener("abort", async () => {
         clearInterval(heartbeat);
         unsubscribe();
         
         // Remove participant
         if (userId) {
-          removeParticipant(roomId, userId);
+          await removeParticipant(roomId, userId);
         }
 
         try {
@@ -95,7 +95,7 @@ export async function POST(
     const body = await request.json();
     const { content, editorId } = body as { content: string; editorId: string };
 
-    const room = updateRoomContent(roomId, content);
+    const room = await updateRoomContent(roomId, content);
 
     if (!room) {
       const res: UpdateContentResponse = { success: false, error: "room_not_found" };

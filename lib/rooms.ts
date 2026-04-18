@@ -1,28 +1,5 @@
 import { Room } from "./types";
-import low from "lowdb";
-import FileSync from "lowdb/adapters/FileSync";
-import path from "path";
-import fs from "fs";
-
-// 数据库存储结构
-interface Schema {
-  rooms: Room[];
-}
-
-// 确保数据目录存在
-const isProd = process.env.NODE_ENV === "production";
-const DATA_DIR = isProd ? "/tmp/upplus-data" : path.join(process.cwd(), "data");
-
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-// 初始化 lowdb
-const adapter = new FileSync<Schema>(path.join(DATA_DIR, "db.json"));
-const db = low(adapter);
-
-// 设置默认值
-db.defaults({ rooms: [] }).write();
+import { supabase } from "./supabase";
 
 // SSE 连接订阅者映射 (内存中管理，无需持久化)
 type SSECallback = (data: string) => void;
@@ -30,50 +7,60 @@ const subscribers = new Map<string, Set<SSECallback>>();
 
 // ==================== 房间管理 ====================
 
-export function createRoom(roomId: string, passwordHash: string): Room {
-  const existingRoom = db.get("rooms").find({ id: roomId }).value();
+export async function createRoom(roomId: string, passwordHash: string): Promise<Room> {
+  const { data: existingRoom } = await supabase
+    .from('rooms')
+    .select('*')
+    .eq('id', roomId)
+    .single();
   
   if (existingRoom) {
-    return existingRoom;
+    return {
+      ...existingRoom,
+      participants: new Set(existingRoom.participants || [])
+    };
   }
 
-  const newRoom: Room = {
+  const now = Date.now();
+  const newRoom = {
     id: roomId,
     passwordHash,
     content: "",
-    lastUpdated: Date.now(),
-    createdAt: Date.now(),
-    participants: [] as any, // 在持久化时存为数组
+    lastUpdated: now,
+    createdAt: now,
+    participants: [] // Supabase 存为 array
   };
 
-  db.get("rooms").push(newRoom).write();
+  await supabase.from('rooms').insert([newRoom]);
   
-  // 返回时确保 participants 是 Set，以兼容现有逻辑
   return { ...newRoom, participants: new Set() };
 }
 
-export function getRoom(roomId: string): Room | undefined {
-  const roomData = db.get("rooms").find({ id: roomId }).value();
-  if (!roomData) return undefined;
+export async function getRoom(roomId: string): Promise<Room | undefined> {
+  const { data, error } = await supabase
+    .from('rooms')
+    .select('*')
+    .eq('id', roomId)
+    .single();
+
+  if (error || !data) return undefined;
   
-  // 转换 participants 为 Set，因为 JSON 不支持存储 Set
   return {
-    ...roomData,
-    participants: new Set(roomData.participants || [])
+    ...data,
+    participants: new Set(data.participants || [])
   };
 }
 
-export function updateRoomContent(
+export async function updateRoomContent(
   roomId: string,
   content: string
-): Room | undefined {
-  const room = db.get("rooms").find({ id: roomId }).value();
-  if (!room) return undefined;
+): Promise<Room | undefined> {
+  const { error } = await supabase
+    .from('rooms')
+    .update({ content, lastUpdated: Date.now() })
+    .eq('id', roomId);
 
-  db.get("rooms")
-    .find({ id: roomId })
-    .assign({ content, lastUpdated: Date.now() })
-    .write();
+  if (error) return undefined;
 
   return getRoom(roomId);
 }
@@ -119,48 +106,55 @@ export function getSubscriberCount(roomId: string): number {
 
 // ==================== 参与者管理 ====================
 
-export function addParticipant(roomId: string, userId: string): number {
-  const room = getRoom(roomId);
+export async function addParticipant(roomId: string, userId: string): Promise<number> {
+  const room = await getRoom(roomId);
   if (room) {
-    const participants = Array.from(room.participants);
-    if (!participants.includes(userId)) {
-      participants.push(userId);
-      db.get("rooms")
-        .find({ id: roomId })
-        .assign({ participants })
-        .write();
+    const participantsSet = new Set(room.participants);
+    if (!participantsSet.has(userId)) {
+      participantsSet.add(userId);
+      const participantsArray = Array.from(participantsSet);
+      
+      await supabase
+        .from('rooms')
+        .update({ participants: participantsArray })
+        .eq('id', roomId);
+      
+      broadcastToRoom(
+        roomId,
+        JSON.stringify({ type: "participants", count: participantsArray.length })
+      );
+      return participantsArray.length;
     }
-    
-    broadcastToRoom(
-      roomId,
-      JSON.stringify({ type: "participants", count: participants.length })
-    );
-    return participants.length;
+    return participantsSet.size;
   }
   return 0;
 }
 
-export function removeParticipant(roomId: string, userId: string): number {
-  const room = getRoom(roomId);
+export async function removeParticipant(roomId: string, userId: string): Promise<number> {
+  const room = await getRoom(roomId);
   if (room) {
-    let participants = Array.from(room.participants);
-    participants = participants.filter(id => id !== userId);
-    
-    db.get("rooms")
-      .find({ id: roomId })
-      .assign({ participants })
-      .write();
+    const participantsSet = new Set(room.participants);
+    if (participantsSet.has(userId)) {
+      participantsSet.delete(userId);
+      const participantsArray = Array.from(participantsSet);
+      
+      await supabase
+        .from('rooms')
+        .update({ participants: participantsArray })
+        .eq('id', roomId);
 
-    broadcastToRoom(
-      roomId,
-      JSON.stringify({ type: "participants", count: participants.length })
-    );
-    return participants.length;
+      broadcastToRoom(
+        roomId,
+        JSON.stringify({ type: "participants", count: participantsArray.length })
+      );
+      return participantsArray.length;
+    }
+    return participantsSet.size;
   }
   return 0;
 }
 
-export function getParticipantCount(roomId: string): number {
-  const room = getRoom(roomId);
+export async function getParticipantCount(roomId: string): Promise<number> {
+  const room = await getRoom(roomId);
   return room?.participants?.size ?? 0;
 }

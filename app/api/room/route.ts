@@ -19,12 +19,13 @@ export async function POST(request: NextRequest) {
     }
 
     // If room already exists, return existing (idempotent)
-    if (getRoom(id)) {
+    const existingRoom = await getRoom(id);
+    if (existingRoom) {
       const res: CreateRoomResponse = { success: true, roomId: id };
       return NextResponse.json(res);
     }
 
-    createRoom(id, passwordHash);
+    await createRoom(id, passwordHash);
     const res: CreateRoomResponse = { success: true, roomId: id };
     return NextResponse.json(res, { status: 201 });
   } catch (e) {
@@ -43,6 +44,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ exists: false, error: "Missing roomId" }, { status: 400 });
   }
 
-  const room = getRoom(roomId);
+  const room = await getRoom(roomId);
   return NextResponse.json({ exists: !!room });
 }
