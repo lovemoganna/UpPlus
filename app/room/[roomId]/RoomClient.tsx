@@ -39,9 +39,6 @@ export default function RoomClient() {
     setUserId(id);
   }, [roomId]);
 
-  // ---- Open SSE connection for real-time content sync ----
-    return null;
-  }, [userId, basePath]);
 
   // ---- Joiner: verify password via API, then open SSE ----
   const handleVerifyRequest = useCallback(
@@ -109,7 +106,7 @@ export default function RoomClient() {
         }
       }
     },
-    [roomId, openSSE, basePath]
+    [roomId, basePath]
   );
 
   // ---- Creator: check local password, create room via API, open SSE ----
@@ -134,7 +131,7 @@ export default function RoomClient() {
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
     };
-  }, [roomId, userId, openSSE]);
+  }, [roomId, userId]);
 
   // ---- Creator: set password and create room via API ----
   const handlePasswordVerified = useCallback(
@@ -162,7 +159,7 @@ export default function RoomClient() {
 
       setState("ready");
     },
-    [roomId, openSSE, basePath]
+    [roomId, basePath]
   );
 
   const handlePasswordError = useCallback((err: string) => {
