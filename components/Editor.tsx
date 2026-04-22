@@ -6,12 +6,14 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { cacheRoom } from "@/lib/duckdb";
 import { STORAGE_KEYS, safeGetItem } from "@/lib/storage";
+import { encryptData, decryptData } from "@/lib/crypto";
 
 interface EditorProps {
   roomId: string;
   initialContent: string;
   passwordHash: string;
   userId: string;
+  encryptionKey?: CryptoKey | null;
   onParticipantsChange?: (count: number) => void;
   disabled?: boolean;
 }
@@ -20,6 +22,7 @@ export default function Editor({
   roomId,
   initialContent,
   userId,
+  encryptionKey,
   onParticipantsChange,
   disabled = false,
 }: EditorProps) {
@@ -45,7 +48,18 @@ export default function Editor({
       }
 
       saveTimeoutRef.current = setTimeout(async () => {
-        const content = JSON.stringify(editor.getJSON());
+        const rawContent = JSON.stringify(editor.getJSON());
+        let content = rawContent;
+
+        // 加密
+        if (encryptionKey) {
+          try {
+            content = await encryptData(rawContent, encryptionKey);
+          } catch (e) {
+            console.error("Encryption error:", e);
+            return;
+          }
+        }
         
         // 1. 同步到本地 SQL (DuckDB)
         const hash = safeGetItem(STORAGE_KEYS.PWD_HASH(roomId)) || "";
@@ -67,39 +81,66 @@ export default function Editor({
 
   // Keep editor content in sync when initialContent changes from SSE
   useEffect(() => {
-    if (!initialContent || !editor) return;
+    if (!initialContent || !editor || (encryptionKey === undefined)) return;
     if (isReceivingUpdate.current) return;
-    const current = JSON.stringify(editor.getJSON());
-    if (current !== initialContent) {
-      try {
-        const parsed = JSON.parse(initialContent);
-        isReceivingUpdate.current = true;
-        editor.commands.setContent(parsed, false);
-        setTimeout(() => {
-          isReceivingUpdate.current = false;
-        }, 100);
-      } catch {
-        // ignore parse errors
+
+    const updateEditor = async () => {
+      let decrypted = initialContent;
+      if (encryptionKey) {
+        try {
+          decrypted = await decryptData(initialContent, encryptionKey);
+        } catch (e) {
+          console.error("Initial decryption error:", e);
+          // If decryption fails, it might be plaintext or wrong key. 
+          // For now, we only update if it looks like valid JSON after optional decryption.
+        }
       }
-    }
-  }, [initialContent, editor]);
+
+      const current = JSON.stringify(editor.getJSON());
+      if (current !== decrypted) {
+        try {
+          const parsed = JSON.parse(decrypted);
+          isReceivingUpdate.current = true;
+          editor.commands.setContent(parsed, false);
+          setTimeout(() => {
+            isReceivingUpdate.current = false;
+          }, 100);
+        } catch {
+          // ignore parse errors
+        }
+      }
+    };
+
+    updateEditor();
+  }, [initialContent, editor, encryptionKey]);
 
   // Setup SSE for receiving real-time updates
   useEffect(() => {
     if (!roomId || !userId) return;
 
-    const es = new EventSource(`${basePath}/api/room/${roomId}/content`);
+    const es = new EventSource(`${basePath}/api/room/${roomId}/content?userId=${userId}`);
     sseRef.current = es;
 
-    es.onmessage = (event) => {
+    es.onmessage = async (event) => {
       try {
         const data = JSON.parse(event.data);
 
         if (data.type === "update") {
           if (data.editor === userId) return;
-          if (!editor) return;
+          if (!editor || (encryptionKey === undefined)) return;
+          
+          let decrypted = data.content;
+          if (encryptionKey) {
+            try {
+              decrypted = await decryptData(data.content, encryptionKey);
+            } catch (e) {
+              console.error("SSE decryption error:", e);
+              return;
+            }
+          }
+
           try {
-            const parsed = JSON.parse(data.content);
+            const parsed = JSON.parse(decrypted);
             isReceivingUpdate.current = true;
             editor.commands.setContent(parsed, false);
             setTimeout(() => {
@@ -107,6 +148,33 @@ export default function Editor({
             }, 100);
           } catch {
             // ignore
+          }
+        }
+
+        if (data.type === "init") {
+          if (!editor || (encryptionKey === undefined)) return;
+          
+          let decrypted = data.content;
+          if (encryptionKey && data.content) {
+            try {
+              decrypted = await decryptData(data.content, encryptionKey);
+            } catch (e) {
+              console.error("Init decryption error:", e);
+              // Fallback to plain text if needed, but for E2EE rooms it should be encrypted
+            }
+          }
+
+          if (decrypted) {
+            try {
+              const parsed = JSON.parse(decrypted);
+              isReceivingUpdate.current = true;
+              editor.commands.setContent(parsed, false);
+              setTimeout(() => {
+                isReceivingUpdate.current = false;
+              }, 100);
+            } catch {
+              // ignore
+            }
           }
         }
 

@@ -196,3 +196,83 @@ export function generateUserId(): string {
     Date.now().toString(36)
   );
 }
+
+/**
+ * 从密码和盐值派生加密密钥 (AES-GCM 256)
+ */
+export async function deriveKeyFromPassword(password: string, salt: string): Promise<CryptoKey> {
+  const subtle = getSubtleCrypto();
+  if (!subtle) throw new Error("Web Crypto API not available");
+
+  const encoder = new TextEncoder();
+  const passwordKey = await subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+
+  return await subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: encoder.encode(salt),
+      iterations: 100000,
+      hash: "SHA-256",
+    },
+    passwordKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+/**
+ * 对文本进行加密 (AES-GCM)
+ * 返回 Base64 字符串（包含 IV）
+ */
+export async function encryptData(text: string, key: CryptoKey): Promise<string> {
+  const subtle = getSubtleCrypto();
+  if (!subtle) throw new Error("Web Crypto API not available");
+
+  const encoder = new TextEncoder();
+  const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    encoder.encode(text)
+  );
+
+  const combined = new Uint8Array(iv.length + encrypted.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(encrypted), iv.length);
+
+  // 转换为 Base64
+  return btoa(String.fromCharCode(...Array.from(combined)));
+}
+
+/**
+ * 对加密数据进行解密 (AES-GCM)
+ * 输入为 Base64 字符串（包含 IV）
+ */
+export async function decryptData(encryptedBase64: string, key: CryptoKey): Promise<string> {
+  const subtle = getSubtleCrypto();
+  if (!subtle) throw new Error("Web Crypto API not available");
+
+  const combined = new Uint8Array(
+    atob(encryptedBase64)
+      .split("")
+      .map((c) => c.charCodeAt(0))
+  );
+
+  const iv = combined.slice(0, 12);
+  const data = combined.slice(12);
+
+  const decrypted = await subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    data
+  );
+
+  return new TextDecoder().decode(decrypted);
+}

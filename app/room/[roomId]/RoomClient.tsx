@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
-import { generateUserId, hashPassword } from "@/lib/crypto";
+import { generateUserId, hashPassword, deriveKeyFromPassword } from "@/lib/crypto";
 import { STORAGE_KEYS, safeGetItem, safeSetItem, safeRemoveItem } from "@/lib/storage";
 import { cacheRoom, getCachedRoom } from "@/lib/duckdb";
 import PasswordGate from "@/components/PasswordGate";
@@ -24,6 +24,7 @@ export default function RoomClient() {
   const [participantCount, setParticipantCount] = useState(0);
   const [copied, setCopied] = useState(false);
   const [verifyError, setVerifyError] = useState("");
+  const [encryptionKey, setEncryptionKey] = useState<CryptoKey | null>(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -39,47 +40,7 @@ export default function RoomClient() {
   }, [roomId]);
 
   // ---- Open SSE connection for real-time content sync ----
-  const openSSE = useCallback((room: string, initial?: { content: string; participants: number }) => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
-
-    if (initial?.content) setInitialContent(initial.content);
-    if (initial?.participants !== undefined) setParticipantCount(initial.participants);
-
-    // 适配 basePath
-    const es = new EventSource(`${basePath}/api/room/${room}/content?userId=${userId}`);
-    eventSourceRef.current = es;
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        if (data.type === "init") {
-          // Initial state from server
-          if (data.content) setInitialContent(data.content);
-          if (data.participants !== undefined) setParticipantCount(data.participants);
-          setState("ready");
-        }
-
-        if (data.type === "update") {
-          if (data.editor === userId) return;
-          setInitialContent(data.content || "");
-        }
-
-        if (data.type === "participants") {
-          setParticipantCount(data.count);
-        }
-      } catch {
-        // ignore malformed messages
-      }
-    };
-
-    es.onerror = () => {
-      // 在静态环境下，SSE 可能会 404，我们直接忽略错误，让用户继续在本地编辑
-    };
-
-    return es;
+    return null;
   }, [userId, basePath]);
 
   // ---- Joiner: verify password via API, then open SSE ----
@@ -103,18 +64,23 @@ export default function RoomClient() {
 
         const data = await res.json();
 
-        if (data.success) {
-          safeSetItem(STORAGE_KEYS.PWD_HASH(roomId), inputHash);
-          safeSetItem(STORAGE_KEYS.PWD(roomId), password);
-          if (data.content) {
-            setInitialContent(data.content);
-            await cacheRoom(roomId, inputHash, data.content);
+          if (data.success) {
+            safeSetItem(STORAGE_KEYS.PWD_HASH(roomId), inputHash);
+            safeSetItem(STORAGE_KEYS.PWD(roomId), password);
+            
+            // 派生加密密钥
+            const key = await deriveKeyFromPassword(password, roomId);
+            setEncryptionKey(key);
+
+            if (data.content) {
+              setInitialContent(data.content);
+              await cacheRoom(roomId, inputHash, data.content);
+            } else {
+              await cacheRoom(roomId, inputHash, "");
+            }
+            // openSSE 被移除，因为 Editor.tsx 会处理
+            setState("ready");
           } else {
-            await cacheRoom(roomId, inputHash, "");
-          }
-          openSSE(roomId);
-          setState("ready");
-        } else {
           if (data.error === "room_not_found") {
             setVerifyError("房间不存在");
           } else {
@@ -129,6 +95,11 @@ export default function RoomClient() {
         if (cached || e.message === "api_not_available") {
           safeSetItem(STORAGE_KEYS.PWD_HASH(roomId), inputHash);
           safeSetItem(STORAGE_KEYS.PWD(roomId), password);
+          
+          // 派生加密密钥
+          const key = await deriveKeyFromPassword(password, roomId);
+          setEncryptionKey(key);
+
           setInitialContent(cached?.last_content || "");
           setState("ready");
           // 静态环境不开启 SSE
@@ -150,7 +121,11 @@ export default function RoomClient() {
     if (savedPwd) {
       const savedContent = safeGetItem(STORAGE_KEYS.CONTENT(roomId)) || "";
       setInitialContent(savedContent);
-      openSSE(roomId);
+      
+      // 恢复密钥
+      deriveKeyFromPassword(savedPwd, roomId).then(setEncryptionKey);
+      
+      setState("ready");
     } else {
       setState("password");
     }
@@ -179,7 +154,12 @@ export default function RoomClient() {
         // API 失败（静态环境），继续运行
       }
 
-      openSSE(roomId);
+      // openSSE 被移除
+      
+      // 派生加密密钥
+      const key = await deriveKeyFromPassword(password, roomId);
+      setEncryptionKey(key);
+
       setState("ready");
     },
     [roomId, openSSE, basePath]
@@ -261,7 +241,17 @@ export default function RoomClient() {
             </div>
             <div>
               <h1 className="text-sm font-semibold text-slate-900">UpPlus</h1>
-              <p className="text-xs text-slate-400">实时协作</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-xs text-slate-400">实时协作</p>
+                {encryptionKey && (
+                  <div className="flex items-center gap-0.5 px-1 rounded bg-green-50 text-[10px] font-medium text-green-600 border border-green-100">
+                    <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                    </svg>
+                    E2EE
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -301,6 +291,7 @@ export default function RoomClient() {
             initialContent={initialContent}
             passwordHash=""
             userId={userId}
+            encryptionKey={encryptionKey}
             onParticipantsChange={setParticipantCount}
           />
         </div>
